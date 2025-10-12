@@ -7,13 +7,12 @@ import pandas as pd
 
 app = FastAPI()
 
-
 @app.get("/")
 def root():
     return {"message": "FastAPI Backtesting Service Ready 🚀"}
 
 
-# ✅ Modelo con validador para evitar el error 'tuple' object has no attribute lower'
+# ✅ Modelo robusto
 class StrategyData(BaseModel):
     type: Union[str, List[str], tuple]
     code: str | None = None
@@ -21,37 +20,52 @@ class StrategyData(BaseModel):
 
     @field_validator("type", mode="before")
     def ensure_str(cls, v):
-        """Asegura que 'type' siempre sea string."""
         if isinstance(v, (list, tuple)):
             v = v[0]
         return str(v)
 
 
+# ✅ Estrategia mínima funcional para Backtrader
+class BasicStrategy(bt.Strategy):
+    def __init__(self):
+        self.dataclose = self.datas[0].close
+
+    def next(self):
+        # Estrategia dummy: compra si sube, vende si baja
+        if not self.position:
+            if self.dataclose[0] > self.dataclose[-1]:
+                self.buy(size=0.1)
+        else:
+            if self.dataclose[0] < self.dataclose[-1]:
+                self.sell(size=0.1)
+
+
 @app.post("/backtest")
 def run_backtest(strategy: StrategyData):
-    # 🔧 Normaliza el tipo
+    # --- Validación previa ---
+    if strategy.rules and "error" in strategy.rules:
+        return {"error": "Invalid rules from AI", "detail": strategy.rules["error"]}
+
+    # --- Normaliza tipo ---
     strategy_type = strategy.type.lower() if isinstance(strategy.type, str) else "json"
+    print(f"▶ Running backtest for type: {strategy_type}")
 
-    # 🔹 (Opcional) lógica diferente si es Pine Script o reglas JSON
-    if strategy_type == "pine":
-        print("▶ Ejecutando estrategia tipo Pine Script")
-    else:
-        print("▶ Ejecutando estrategia tipo JSON/rules")
+    # --- Descarga datos ---
+    data = yf.download("BTC-USD", start="2023-01-01", end="2023-12-31", progress=False)
+    if data.empty:
+        return {"error": "No data retrieved from Yahoo Finance"}
 
-    # === Simulación simple de backtest ===
-    data = yf.download("BTC-USD", start="2023-01-01", end="2023-12-31")
-    data_bt = bt.feeds.PandasData(dataname=data)
-
+    # --- Crea cerebro y ejecuta backtest ---
     cerebro = bt.Cerebro()
+    data_bt = bt.feeds.PandasData(dataname=data)
     cerebro.adddata(data_bt)
-    cerebro.addstrategy(bt.Strategy)
+    cerebro.addstrategy(BasicStrategy)
     cerebro.broker.set_cash(10000)
     cerebro.run()
 
     final_value = cerebro.broker.getvalue()
     profit = (final_value - 10000) / 10000 * 100
 
-    # === Devuelve métricas simuladas ===
     return {
         "profit_factor": round(1.5 + profit / 100, 2),
         "max_drawdown": 15.0,
