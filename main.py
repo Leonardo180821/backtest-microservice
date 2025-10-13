@@ -3,7 +3,6 @@ from pydantic import BaseModel, field_validator
 from typing import Any, Dict, List, Union
 import yfinance as yf
 import backtrader as bt
-import pandas as pd
 
 app = FastAPI()
 
@@ -13,7 +12,7 @@ def root():
     return {"message": "FastAPI Backtesting Service Ready 🚀"}
 
 
-# ✅ Modelo robusto que acepta tipo como str, list o tuple
+# ✅ Modelo robusto
 class StrategyData(BaseModel):
     type: Union[str, List[str], tuple]
     code: str | None = None
@@ -26,13 +25,12 @@ class StrategyData(BaseModel):
         return str(v)
 
 
-# ✅ Estrategia mínima funcional (placeholder)
+# ✅ Estrategia dummy
 class BasicStrategy(bt.Strategy):
     def __init__(self):
         self.dataclose = self.datas[0].close
 
     def next(self):
-        # Estrategia dummy: compra si sube, vende si baja
         if not self.position:
             if self.dataclose[0] > self.dataclose[-1]:
                 self.buy(size=0.1)
@@ -44,45 +42,36 @@ class BasicStrategy(bt.Strategy):
 @app.post("/backtest")
 def run_backtest(strategy: StrategyData):
     """
-    Recibe estrategias en formato:
+    Recibe:
     {
-        "type": "json" | "pine",
-        "code": "...",
-        "rules": { "entry": [...], "exit": [...] }
+      "type": "json" | "pine",
+      "code": "...",
+      "rules": { "entry": [...], "exit": [...] }
     }
     """
     try:
         # --- Validación robusta ---
-        if strategy.rules and "error" in strategy.rules:
-            return {
-                "error": "Invalid rules from AI",
-                "detail": strategy.rules.get("detail", "AI returned an error object")
-            }
+        if isinstance(strategy.rules, dict) and "error" in strategy.rules:
+            return {"error": "Invalid rules from AI", "detail": strategy.rules.get("detail", "AI returned an error object")}
 
         if not strategy.rules or not isinstance(strategy.rules, dict):
             return {"error": "Invalid rules from AI", "detail": "rules field is missing or not a dict"}
 
         if "entry" not in strategy.rules or "exit" not in strategy.rules:
-            return {
-                "error": "Invalid rules from AI",
-                "detail": f"Missing 'entry' or 'exit' in rules: {strategy.rules}"
-            }
+            return {"error": "Invalid rules from AI", "detail": f"Missing 'entry' or 'exit' in rules: {strategy.rules}"}
 
         # --- Normaliza tipo ---
-        strategy_type = (
-            strategy.type.lower() if isinstance(strategy.type, str) else "json"
-        )
+        strategy_type = str(strategy.type).lower() if isinstance(strategy.type, (str, list, tuple)) else "json"
         print(f"▶ Running backtest for type: {strategy_type}")
 
-        # --- Descarga datos ---
+        # --- Datos ---
         data = yf.download("BTC-USD", start="2023-01-01", end="2023-12-31", progress=False)
         if data.empty:
             return {"error": "No data retrieved from Yahoo Finance"}
 
-        # --- Configura cerebro y ejecuta backtest ---
+        # --- Backtest ---
         cerebro = bt.Cerebro()
-        data_bt = bt.feeds.PandasData(dataname=data)
-        cerebro.adddata(data_bt)
+        cerebro.adddata(bt.feeds.PandasData(dataname=data))
         cerebro.addstrategy(BasicStrategy)
         cerebro.broker.set_cash(10000)
         cerebro.run()
@@ -100,7 +89,4 @@ def run_backtest(strategy: StrategyData):
         }
 
     except Exception as e:
-        return {
-            "error": "Internal Backtest Error",
-            "detail": str(e)
-        }
+        return {"error": "Internal Backtest Error", "detail": str(e)}
