@@ -1,6 +1,6 @@
-fastapi
-uvicorn
-backtrader
-ccxt
-yfinance
-pandas
+fastapi==0.115.2
+uvicorn==0.31.1
+yfinance==0.2.40
+backtrader==1.9.78.123
+pandas==2.2.3
+numpy==2.1.1

@@ -9,38 +9,50 @@ app = FastAPI()
 
 @app.get("/")
 def root():
-    return {"message": "FastAPI Backtesting Service Ready 🚀"}
+    return {"message": "✅ FastAPI Backtesting Service is live!"}
 
 
-# ✅ Modelo robusto de entrada
+# ======================
+# 🧩 Modelo de datos
+# ======================
 class StrategyData(BaseModel):
-    type: Union[str, List[str], tuple]
+    type: Union[str, List[str], tuple, None] = "json"
     code: str | None = None
     rules: Dict[str, Any] | None = None
 
     @field_validator("type", mode="before")
-    def ensure_str(cls, v):
-        """Convierte listas o tuplas a string"""
+    def normalize_type(cls, v):
+        """
+        Asegura que el campo 'type' sea siempre un string limpio.
+        """
+        if v is None:
+            return "json"
         if isinstance(v, (list, tuple)):
-            v = v[0]
-        return str(v)
+            v = v[0] if len(v) > 0 else "json"
+        return str(v).lower().strip()
 
 
-# ✅ Estrategia simple para backtesting
+# ======================
+# 🧠 Estrategia simple
+# ======================
 class BasicStrategy(bt.Strategy):
     def __init__(self):
         self.dataclose = self.datas[0].close
 
     def next(self):
         if not self.position:
+            # Compra cuando sube
             if self.dataclose[0] > self.dataclose[-1]:
                 self.buy(size=0.1)
         else:
+            # Vende cuando baja
             if self.dataclose[0] < self.dataclose[-1]:
                 self.sell(size=0.1)
 
 
-# ✅ Endpoint principal de backtesting
+# ======================
+# 🚀 Endpoint principal
+# ======================
 @app.post("/backtest")
 def run_backtest(strategy: StrategyData):
     """
@@ -52,41 +64,23 @@ def run_backtest(strategy: StrategyData):
     }
     """
     try:
-        # --- Validación robusta de reglas ---
-        if isinstance(strategy.rules, dict) and "error" in strategy.rules:
-            return {
-                "error": "Invalid rules from AI",
-                "detail": strategy.rules.get("detail", "AI returned an error object")
-            }
-
+        # --- Validación de entrada ---
         if not strategy.rules or not isinstance(strategy.rules, dict):
-            return {
-                "error": "Invalid rules from AI",
-                "detail": "rules field is missing or not a dict"
-            }
+            return {"error": "Invalid rules", "detail": "Missing or invalid 'rules' object"}
 
         if "entry" not in strategy.rules or "exit" not in strategy.rules:
-            return {
-                "error": "Invalid rules from AI",
-                "detail": f"Missing 'entry' or 'exit' in rules: {strategy.rules}"
-            }
+            return {"error": "Invalid rules", "detail": "Missing 'entry' or 'exit' fields"}
 
-        # --- Normaliza el tipo de estrategia ---
-        strategy_type = strategy.type
-        if isinstance(strategy_type, (list, tuple)):
-            strategy_type = strategy_type[0]
-        if not isinstance(strategy_type, str):
-            strategy_type = str(strategy_type)
-        strategy_type = strategy_type.lower().strip()
-
+        # --- Normaliza tipo ---
+        strategy_type = strategy.type or "json"
         print(f"▶ Running backtest for type: {strategy_type}")
 
-        # --- Descarga de datos desde Yahoo Finance ---
+        # --- Descarga datos ---
         data = yf.download("BTC-USD", start="2023-01-01", end="2023-12-31", progress=False)
         if data.empty:
             return {"error": "No data retrieved from Yahoo Finance"}
 
-        # --- Ejecución del backtest ---
+        # --- Simulación ---
         cerebro = bt.Cerebro()
         cerebro.adddata(bt.feeds.PandasData(dataname=data))
         cerebro.addstrategy(BasicStrategy)
@@ -96,16 +90,16 @@ def run_backtest(strategy: StrategyData):
         final_value = cerebro.broker.getvalue()
         profit = (final_value - 10000) / 10000 * 100
 
+        # --- Resultado final ---
         return {
+            "status": "ok",
+            "strategy_type": strategy_type,
             "profit_factor": round(1.5 + profit / 100, 2),
             "max_drawdown": 15.0,
             "num_trades": 50,
             "final_value": round(final_value, 2),
-            "strategy_type": strategy_type,
             "received_rules": strategy.rules,
         }
 
     except Exception as e:
-        import traceback
-        print("❌ Error interno:", traceback.format_exc())
         return {"error": "Internal Backtest Error", "detail": str(e)}
